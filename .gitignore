@@ -1,5 +1,44 @@
+# node_modules
 /node_modules
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Test data
 /Test_data
-node_modules
-Test_data
+Test_data/
+
+# Build outputs
+dist/
+build/
+out/
+*.exe
+*.dmg
+*.AppImage
 package-lock.json
+
+# Development
+.env
+.env.local
+*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/

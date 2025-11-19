@@ -1,17 +1,61 @@
 {
   "name": "neurosort",
   "version": "1.0.0",
-  "description": "AI-powered file organizer",
+  "description": "Local AI-powered file organizer using Phi-3 LLM",
   "main": "src/main/main.js",
+  "author": "Om Dahale",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/omd01/NeuroSort"
+  },
+  "homepage": "https://omd01.github.io/NeuroSort",
   "scripts": {
     "dev": "concurrently \"vite\" \"wait-on tcp:3000 && cross-env NODE_ENV=development CUDA_VISIBLE_DEVICES=1 electron .\"",
     "build": "vite build && electron-builder",
     "pack": "electron-builder --dir",
     "dist": "electron-builder"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "build": {
+    "appId": "com.omdahale.neurosort",
+    "productName": "NeuroSort",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "dist/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "NeuroSort_logo.png"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "icon": "NeuroSort_logo.png",
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "icon": "NeuroSort_logo.png",
+      "category": "Utility"
+    }
+  },
+  "keywords": [
+    "ai",
+    "file-organizer",
+    "llm",
+    "local-ai",
+    "phi3",
+    "productivity"
+  ],
   "devDependencies": {
     "@vitejs/plugin-react": "^5.1.1",
     "autoprefixer": "^10.4.22",
