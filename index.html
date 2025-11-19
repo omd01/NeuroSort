@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NeuroSort - Local AI Workspace Organizer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+
+    <style>
+        body {
+            background-color: #050505;
+            color: #e2e8f0;
+            font-family: 'Inter', sans-serif;
+            overflow-x: hidden;
+            /* Ensures no accidental horizontal scroll */
+        }
+
+        .font-mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* Custom Gradients */
+        .text-gradient {
+            background: linear-gradient(to right, #818cf8, #c084fc, #f472b6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .bg-glow {
+            background: radial-gradient(circle at 50% 50%, rgba(99, 102, 241, 0.15) 0%, rgba(5, 5, 5, 0) 50%);
+        }
+
+        /* 3D Perspective for the App Preview */
+        .perspective-container {
+            perspective: 1500px;
+            margin-top: 2.5rem;
+            /* Adjusted for mobile view */
+        }
+
+        .app-window {
+            transform: rotateX(5deg) rotateY(-5deg) rotateZ(1deg);
+            transition: transform 0.5s ease-out, box-shadow 0.5s ease-out;
+            box-shadow: -20px 20px 60px -10px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+            /* Fixed mobile height for predictable layout */
+            height: 250px;
+        }
+
+        .app-window:hover {
+            transform: rotateX(0deg) rotateY(0deg) rotateZ(0deg) scale(1.02);
+            box-shadow: 0 25px 80px -15px rgba(99, 102, 241, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.1);
+        }
+
+        /* Desktop styles for App Preview */
+        @media (min-width: 768px) {
+            .perspective-container {
+                margin-top: 4rem;
+                perspective: 2000px;
+            }
+
+            .app-window {
+                height: auto;
+            }
+        }
+
+        /* Grid Background */
+        .bg-grid {
+            background-size: 50px 50px;
+            background-image: linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+            mask-image: linear-gradient(to bottom, black 40%, transparent 100%);
+        }
+
+        /* Animations */
+        @keyframes float {
+
+            0%,
+            100% {
+                transform: translateY(0px);
+            }
+
+            50% {
+                transform: translateY(-20px);
+            }
+        }
+
+        .animate-float {
+            animation: float 6s ease-in-out infinite;
+        }
+
+        .scan-line {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: rgba(99, 102, 241, 0.5);
+            box-shadow: 0 0 10px rgba(99, 102, 241, 0.8);
+            animation: scan 3s linear infinite;
+            opacity: 0;
+        }
+
+        .group:hover .scan-line {
+            opacity: 1;
+        }
+
+        @keyframes scan {
+            0% {
+                top: 0%;
+                opacity: 0;
+            }
+
+            10% {
+                opacity: 1;
+            }
+
+            90% {
+                opacity: 1;
+            }
+
+            100% {
+                top: 100%;
+                opacity: 0;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // --- COMPONENTS ---
+
+        const Navbar = () => (
+            <nav className="fixed top-0 w-full z-50 border-b border-white/5 bg-[#050505]/80 backdrop-blur-md">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+                    <div className="flex items-center gap-2 font-bold text-lg tracking-tight">
+                        <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white">
+                            <i className="ph-fill ph-brain"></i>
+                        </div>
+                        <span>NeuroSort</span>
+                    </div>
+                    {/* Links visible on desktop only */}
+                    <div className="hidden md:flex items-center gap-8 text-sm font-medium text-slate-400">
+                        <a href="#problem" className="hover:text-white transition-colors">The Chaos</a>
+                        <a href="#solution" className="hover:text-white transition-colors">The Logic</a>
+                        <a href="#specs" className="hover:text-white transition-colors">Specs</a>
+                    </div>
+                    {/* CTA adjusted for mobile screen */}
+                    <a href="https://github.com/omd01/NeuroSort/releases/latest" target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 sm:px-5 sm:py-2 bg-white text-black text-xs sm:text-sm font-bold rounded-full hover:bg-slate-200 transition-colors flex items-center gap-2">
+                        <i className="ph-bold ph-download-simple"></i> <span className="hidden sm:inline">Download</span> Beta
+                    </a>
+                </div>
+            </nav>
+        );
+
+        const HeroAppPreview = () => {
+            const [activeFile, setActiveFile] = useState(0);
+            const files = [
+                { name: 'raw_footage_01.mov', type: 'video', color: 'text-red-400', bg: 'bg-red-500/20' },
+                { name: 'client_contract.pdf', type: 'doc', color: 'text-blue-400', bg: 'bg-blue-500/20' },
+                { name: 'main_component.tsx', type: 'code', color: 'text-emerald-400', bg: 'bg-emerald-500/20' },
+            ];
+
+            useEffect(() => {
+                const interval = setInterval(() => setActiveFile(prev => (prev + 1) % files.length), 2000);
+                return () => clearInterval(interval);
+            }, []);
+
+            return (
+                <div className="perspective-container w-full max-w-4xl mx-auto relative z-10 px-4">
+                    <div className="app-window bg-[#0f0f12] border border-white/10 rounded-xl overflow-hidden aspect-video relative">
+                        {/* Fake Title Bar */}
+                        <div className="h-8 bg-[#18181b] border-b border-white/5 flex items-center px-4 gap-2">
+                            <div className="flex gap-1.5">
+                                <div className="w-2.5 h-2.5 rounded-full bg-red-500/50"></div>
+                                <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/50"></div>
+                                <div className="w-2.5 h-2.5 rounded-full bg-green-500/50"></div>
+                            </div>
+                            {/* Hidden on smallest screens */}
+                            <div className="ml-4 text-[10px] text-slate-500 font-mono hidden sm:block">~/workspace/chaos_folder</div>
+                        </div>
+
+                        {/* UI Body - Collapses on mobile */}
+                        <div className="p-4 sm:p-6 flex flex-col sm:flex-row gap-4 sm:gap-6 h-[calc(100%-2rem)]">
+                            <div className="w-full sm:w-1/3 sm:border-r border-white/5 sm:pr-6 space-y-2 order-2 sm:order-1">
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-2">Incoming Stream</div>
+                                {files.map((f, i) => (
+                                    <div key={i} className={`p-2 rounded-lg border transition-all duration-300 flex items-center gap-3 ${i === activeFile ? 'bg-indigo-500/10 border-indigo-500/50 translate-x-1 sm:translate-x-2' : 'bg-slate-800/20 border-transparent opacity-50'}`}>
+                                        <div className={`w-6 h-6 sm:w-8 sm:h-8 rounded flex items-center justify-center text-sm sm:text-lg ${f.bg} ${f.color}`}>
+                                            <i className={`ph-fill ${f.type === 'video' ? 'ph-video' : f.type === 'doc' ? 'ph-file-text' : 'ph-code'}`}></i>
+                                        </div>
+                                        <div className="text-xs font-mono text-slate-300 truncate">{f.name}</div>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="flex-1 relative flex flex-col justify-center items-center text-center order-1 sm:order-2 pb-6 sm:pb-0">
+                                <div className="absolute inset-0 bg-grid opacity-20 pointer-events-none"></div>
+
+                                <div className="w-12 h-12 sm:w-20 sm:h-20 rounded-full bg-indigo-500/10 flex items-center justify-center mb-3 relative">
+                                    <div className="absolute inset-0 border border-indigo-500/30 rounded-full animate-ping"></div>
+                                    <i className="ph-fill ph-brain text-2xl sm:text-4xl text-indigo-500 relative z-10"></i>
+                                </div>
+
+                                <div className="font-mono text-[10px] sm:text-sm text-indigo-300 mb-1">
+                                    &gt; Analyzing Context...
+                                </div>
+                                <div className="text-lg sm:text-2xl font-bold text-white mb-2">
+                                    {files[activeFile].type === 'video' ? 'Heavy Media Detected' :
+                                        files[activeFile].type === 'doc' ? 'Sensitive Document' : 'Source Code'}
+                                </div>
+                                <div className="flex items-center gap-2 text-[10px] sm:text-xs text-slate-500 bg-slate-900 px-3 py-1 rounded-full border border-white/5">
+                                    <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
+                                    Routing...
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div className="absolute -inset-4 bg-indigo-600/20 blur-[100px] -z-10"></div>
+                </div>
+            );
+        };
+
+        const PainPointCard = ({ icon, title, desc }) => (
+            <div className="group p-6 rounded-2xl bg-slate-900/50 border border-white/5 hover:border-indigo-500/30 hover:bg-slate-800/50 transition-all duration-300 relative overflow-hidden">
+                <div className="scan-line"></div>
+                <div className="w-12 h-12 rounded-lg bg-slate-800 flex items-center justify-center text-2xl text-slate-400 group-hover:text-indigo-400 group-hover:scale-110 transition-all mb-4">
+                    <i className={`ph-fill ${icon}`}></i>
+                </div>
+                <h3 className="text-lg font-bold text-white mb-2">{title}</h3>
+                <p className="text-sm text-slate-400 leading-relaxed">{desc}</p>
+            </div>
+        );
+
+        const TechSpecs = () => (
+            <section id="specs" className="py-16 md:py-24 px-4 sm:px-6 bg-[#050505]">
+                <div className="max-w-5xl mx-auto">
+                    {/* Responsive collapse to single column */}
+                    <div className="flex flex-col md:flex-row items-start justify-between gap-12">
+
+                        {/* Left: Description */}
+                        <div className="flex-1 space-y-6">
+                            <h2 className="text-3xl font-bold text-white">System Readiness</h2>
+                            <p className="text-slate-400 leading-relaxed">
+                                NeuroSort leverages <strong>Phi-3 (3.8B params)</strong> or <strong>Llama-3</strong> via Ollama.
+                                This architecture allows us to run powerful AI on surprisingly modest hardware without sending a single byte to the cloud.
+                            </p>
+
+                            <div className="p-4 bg-indigo-900/10 border border-indigo-500/20 rounded-lg flex items-start gap-3">
+                                <i className="ph-fill ph-info text-indigo-400 mt-1"></i>
+                                <div className="space-y-2">
+                                    <h4 className="text-sm font-bold text-indigo-300">Auto-Configured</h4>
+                                    <p className="text-xs text-slate-400">The installer script will automatically check for Node.js and Ollama presence. If missing, it will guide you through the one-click setup.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Right: Spec Grid */}
+                        <div className="flex-1 w-full grid gap-6 pt-8 md:pt-0">
+
+                            {/* Hardware Card */}
+                            <div className="bg-slate-900/30 border border-white/10 rounded-xl p-6">
+                                <div className="flex items-center gap-3 mb-6">
+                                    <div className="w-8 h-8 rounded bg-slate-800 flex items-center justify-center text-slate-300"><i className="ph-fill ph-cpu"></i></div>
+                                    <h3 className="font-bold text-white">Minimum Hardware</h3>
+                                </div>
+                                <ul className="space-y-3 text-sm">
+                                    <li className="flex justify-between items-center pb-2 border-b border-white/5">
+                                        <span className="text-slate-400">RAM (Allocation)</span>
+                                        <span className="font-mono text-emerald-400">Min 1GB Free</span>
+                                    </li>
+                                    <li className="flex justify-between items-center pb-2 border-b border-white/5">
+                                        <span className="text-slate-400">Graphics</span>
+                                        <span className="font-mono text-white">2010+ (OpenGL 4.0)</span>
+                                    </li>
+                                    <li className="flex justify-between items-center pb-2 border-b border-white/5">
+                                        <span className="text-slate-400">Storage</span>
+                                        <span className="font-mono text-white">~2.4GB (Model Weights)</span>
+                                    </li>
+                                </ul>
+                            </div>
+
+                            {/* Software Card */}
+                            <div className="bg-slate-900/30 border border-white/10 rounded-xl p-6">
+                                <div className="flex items-center gap-3 mb-6">
+                                    <div className="w-8 h-8 rounded bg-slate-800 flex items-center justify-center text-slate-300"><i className="ph-fill ph-terminal-window"></i></div>
+                                    <h3 className="font-bold text-white">Software Stack</h3>
+                                </div>
+                                <div className="space-y-4">
+                                    <div className="flex items-center gap-3 text-sm text-slate-300">
+                                        <i className="ph-bold ph-check text-emerald-500"></i>
+                                        <span>Node.js Runtime Environment</span>
+                                    </div>
+                                    <div className="flex items-center gap-3 text-sm text-slate-300">
+                                        <i className="ph-bold ph-check text-emerald-500"></i>
+                                        <span>Ollama Service <code className="text-[10px] bg-slate-800 px-1.5 py-0.5 rounded ml-2">ollama serve</code></span>
+                                    </div>
+                                    <div className="flex items-center gap-3 text-sm text-slate-300">
+                                        <i className="ph-bold ph-check text-emerald-500"></i>
+                                        <span>LLM Model Pulled <code className="text-[10px] bg-slate-800 px-1.5 py-0.5 rounded ml-2">ollama pull phi3</code></span>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+            </section>
+        );
+
+        const InteractiveSortDemo = () => {
+            const [sorted, setSorted] = useState(false);
+
+            return (
+                <div className="w-full bg-[#0a0a0c] rounded-xl border border-white/10 p-6 md:p-8 flex flex-col md:flex-row gap-8 md:gap-12 items-center">
+                    <div className="flex-1 space-y-6">
+                        <h3 className="text-xl md:text-2xl font-bold text-white">The <span className="text-indigo-400">Twin-Directory</span> Engine</h3>
+                        <p className="text-sm text-slate-400">
+                            Stop mixing your React components with your marketing screenshots. NeuroSort enforces a strict separation of concerns at the OS level.
+                        </p>
+                        <div className="space-y-3">
+                            <div className="flex items-center gap-3 text-sm text-slate-300">
+                                <i className="ph-fill ph-check-circle text-emerald-500"></i>
+                                <span>Raw Assets go to <code className="bg-slate-800 px-1 rounded text-xs">/01_Assets</code></span>
+                            </div>
+                            <div className="flex items-center gap-3 text-sm text-slate-300">
+                                <i className="ph-fill ph-check-circle text-emerald-500"></i>
+                                <span>Source Code goes to <code className="bg-slate-800 px-1 rounded text-xs">/00_Dev</code></span>
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => setSorted(!sorted)}
+                            className="mt-4 px-6 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold rounded-lg transition-all w-full md:w-auto"
+                        >
+                            {sorted ? <span className="flex items-center justify-center gap-2"><i className="ph-bold ph-arrow-counter-clockwise"></i> Reset Chaos</span> : "Simulate Cleanup"}
+                        </button>
+                    </div>
+
+                    <div className="flex-1 h-48 md:h-64 w-full bg-slate-900/50 rounded-lg border border-dashed border-slate-700 relative p-4 overflow-hidden">
+                        {/* Chaos State */}
+                        <div className={`absolute inset-0 transition-all duration-700 ${sorted ? 'opacity-0 translate-y-10 scale-90 pointer-events-none' : 'opacity-100'}`}>
+                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-600 font-bold text-4xl sm:text-6xl opacity-10 rotate-[-10deg]">CHAOS</div>
+                            <div className="absolute top-8 left-6 sm:top-10 sm:left-10 bg-red-500/20 text-red-400 p-2 rounded text-xs border border-red-500/30 rotate-[-5deg]">image_final.jpg</div>
+                            <div className="absolute bottom-10 right-6 sm:bottom-20 sm:right-10 bg-blue-500/20 text-blue-400 p-2 rounded text-xs border border-blue-500/30 rotate-[3deg]">invoice.pdf</div>
+                            <div className="absolute top-16 right-16 sm:top-20 sm:right-20 bg-emerald-500/20 text-emerald-400 p-2 rounded text-xs border border-emerald-500/30 rotate-[12deg]">script.js</div>
+                            <div className="absolute bottom-4 left-10 sm:bottom-10 sm:left-20 bg-purple-500/20 text-purple-400 p-2 rounded text-xs border border-purple-500/30 rotate-[-8deg]">logo.svg</div>
+                        </div>
+
+                        {/* Sorted State */}
+                        <div className={`absolute inset-0 flex gap-2 sm:gap-4 transition-all duration-700 ${sorted ? 'opacity-100' : 'opacity-0 -translate-y-10 scale-110 pointer-events-none'}`}>
+                            <div className="flex-1 bg-slate-800/50 rounded border border-white/5 flex flex-col items-center justify-center gap-1 sm:gap-2">
+                                <i className="ph-fill ph-code text-emerald-400 text-xl sm:text-2xl"></i>
+                                <span className="text-[10px] sm:text-xs font-mono text-slate-400">/00_Dev</span>
+                                <div className="w-10 h-1 bg-emerald-500/30 rounded hidden sm:block"></div>
+                            </div>
+                            <div className="flex-1 bg-slate-800/50 rounded border border-white/5 flex flex-col items-center justify-center gap-1 sm:gap-2">
+                                <i className="ph-fill ph-image text-pink-400 text-xl sm:text-2xl"></i>
+                                <span className="text-[10px] sm:text-xs font-mono text-slate-400">/01_Assets</span>
+                                <div className="w-10 h-1 bg-pink-500/30 rounded hidden sm:block"></div>
+                            </div>
+                            <div className="flex-1 bg-slate-800/50 rounded border border-white/5 flex flex-col items-center justify-center gap-1 sm:gap-2">
+                                <i className="ph-fill ph-file-text text-blue-400 text-xl sm:text-2xl"></i>
+                                <span className="text-[10px] sm:text-xs font-mono text-slate-400">/02_Docs</span>
+                                <div className="w-10 h-1 bg-blue-500/30 rounded hidden sm:block"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        const App = () => {
+            return (
+                <div className="min-h-screen flex flex-col">
+                    <Navbar />
+
+                    {/* HERO SECTION */}
+                    <section className="relative pt-24 sm:pt-32 pb-16 sm:pb-20 px-4 sm:px-6 flex flex-col items-center text-center overflow-hidden">
+                        <div className="absolute inset-0 bg-grid z-0 opacity-20"></div>
+                        <div className="bg-glow absolute inset-0 z-0"></div>
+
+                        <div className="relative z-10 max-w-3xl mx-auto space-y-4 sm:space-y-6">
+                            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-900/30 border border-indigo-500/30 text-indigo-300 text-xs font-bold tracking-wider uppercase">
+                                <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></span>
+                                v1.0 Public Beta
+                            </div>
+                            <h1 className="text-4xl sm:text-5xl md:text-7xl font-bold tracking-tighter text-white">
+                                Your OS is Messy. <br />
+                                <span className="text-gradient">AI Will Fix It.</span>
+                            </h1>
+                            <p className="text-base sm:text-lg text-slate-400 max-w-2xl mx-auto leading-relaxed">
+                                NeuroSort uses a lightweight <strong>Local LLM</strong> to analyze, tag, and organize your chaotic "Downloads" folder into a structured Twin-Directory system.
+                            </p>
+                            <div className="flex flex-col sm:flex-row gap-4 justify-center pt-4">
+                                <a href="https://github.com/omd01/NeuroSort/releases/latest/download/NeuroSort-Setup.exe" className="px-6 py-3 sm:px-8 sm:py-4 bg-white text-black font-bold rounded-lg hover:scale-105 transition-transform flex items-center justify-center gap-2 w-full sm:w-auto">
+                                    <i className="ph-fill ph-windows-logo"></i> Download for Windows
+                                </a>
+                                <a href="https://github.com/omd01/NeuroSort/releases/latest/download/NeuroSort.dmg" className="px-6 py-3 sm:px-8 sm:py-4 bg-slate-900 border border-white/10 text-white font-bold rounded-lg hover:bg-slate-800 transition-colors flex items-center justify-center gap-2 w-full sm:w-auto">
+                                    <i className="ph-fill ph-apple-logo"></i> Download for macOS
+                                </a>
+                            </div>
+                            <div className="pt-2 text-xs text-slate-500 font-mono">
+                                * Runs locally. No data ever leaves your machine.
+                            </div>
+                        </div>
+
+                        {/* 3D APP PREVIEW */}
+                        <HeroAppPreview />
+                    </section>
+
+                    {/* CLIENT/USER LOGOS */}
+                    <div className="border-y border-white/5 bg-[#08080a] py-6 sm:py-8 overflow-hidden">
+                        <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col items-center gap-4 sm:gap-6">
+                            <p className="text-xs font-bold text-slate-600 uppercase tracking-widest">Trusted by Engineers at</p>
+                            {/* Reduced size/gap on mobile */}
+                            <div className="flex gap-4 sm:gap-12 opacity-30 grayscale hover:grayscale-0 transition-all duration-500 text-sm sm:text-xl">
+                                <div className="font-bold flex items-center gap-1"><i className="ph-fill ph-triangle"></i> VERCEL</div>
+                                <div className="font-bold flex items-center gap-1"><i className="ph-fill ph-github-logo"></i> GITHUB</div>
+                                <div className="font-bold flex items-center gap-1"><i className="ph-fill ph-figma-logo"></i> FIGMA</div>
+                                <div className="font-bold flex items-center gap-1 hidden sm:flex"><i className="ph-fill ph-stripe-logo"></i> STRIPE</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* PROBLEM & SOLUTION GRID */}
+                    <section id="problem" className="py-16 md:py-24 px-4 sm:px-6 max-w-7xl mx-auto">
+                        <div className="text-center mb-12 sm:mb-16">
+                            <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">Why You Need This</h2>
+                            <p className="text-slate-400">The "Downloads" folder is the single biggest bottleneck in your creative pipeline.</p>
+                        </div>
+
+                        {/* Collapsed to single column on mobile, then 3 columns */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <PainPointCard
+                                icon="ph-folders"
+                                title="Context Switching"
+                                desc="Every time you search for a file, you break your flow state. NeuroSort ensures files are exactly where your logic expects them to be."
+                            />
+                            <PainPointCard
+                                icon="ph-git-branch"
+                                title="Repo Bloat"
+                                desc="Stop accidentally committing 50MB video files to your Next.js repo. We separate 'Assets' from 'Code' automatically."
+                            />
+                            <PainPointCard
+                                icon="ph-lock-key"
+                                title="Privacy First"
+                                desc="Cloud AI is great, but not for your tax documents. Our Phi-3 model runs entirely on your CPU/GPU. 0% Data Leakage."
+                            />
+                        </div>
+                    </section>
+
+                    {/* INTERACTIVE DEMO SECTION */}
+                    <section id="solution" className="py-16 md:py-24 px-4 sm:px-6 bg-slate-900/20 border-y border-white/5">
+                        <div className="max-w-5xl mx-auto">
+                            <InteractiveSortDemo />
+                        </div>
+                    </section>
+
+                    {/* TARGET AUDIENCE */}
+                    <section className="py-16 md:py-24 px-4 sm:px-6 max-w-7xl mx-auto">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
+                            <div className="space-y-8 order-2 md:order-1">
+                                <h2 className="text-3xl md:text-4xl font-bold text-white">Built for the <br /> <span className="text-gradient">Polymath Creator</span></h2>
+                                <div className="space-y-6">
+                                    <div className="flex gap-4">
+                                        <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-indigo-900/50 flex items-center justify-center text-indigo-400 shrink-0 border border-indigo-500/20">
+                                            <i className="ph-bold ph-code text-lg sm:text-xl"></i>
+                                        </div>
+                                        <div>
+                                            <h4 className="text-white font-bold text-lg">Full Stack Devs</h4>
+                                            <p className="text-sm text-slate-400 mt-1">Manage huge projects without losing track of design assets, ENV files, and raw data dumps.</p>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-4">
+                                        <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-purple-900/50 flex items-center justify-center text-purple-400 shrink-0 border border-purple-500/20">
+                                            <i className="ph-bold ph-youtube-logo text-lg sm:text-xl"></i>
+                                        </div>
+                                        <div>
+                                            <h4 className="text-white font-bold text-lg">Content Entrepreneurs</h4>
+                                            <p className="text-sm text-slate-400 mt-1">Instantly separate your raw footage from your final renders and thumbnails. Streamline your edit workflow.</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="relative group order-1 md:order-2">
+                                <div className="absolute inset-0 bg-gradient-to-r from-indigo-600 to-purple-600 rounded-2xl blur-2xl opacity-20 group-hover:opacity-40 transition-opacity"></div>
+                                <div className="relative bg-[#0f0f12] border border-white/10 rounded-2xl p-6 sm:p-8 hover:scale-[1.02] transition-transform duration-500">
+                                    <div className="font-mono text-xs text-slate-500 mb-4 border-b border-white/5 pb-4 flex justify-between">
+                                        <span>SYSTEM_LOGS</span>
+                                        <span className="text-green-500">● LIVE</span>
+                                    </div>
+                                    <div className="space-y-2 font-mono text-xs">
+                                        <div className="text-slate-400">&gt; user_action: drag_drop("folder_chaos")</div>
+                                        <div className="text-indigo-400">&gt; ai_agent: scanning_content...</div>
+                                        <div className="text-slate-500 pl-4">found: 142 images, 32 docs, 15 scripts</div>
+                                        <div className="text-purple-400">&gt; ai_agent: executing_sort_matrix</div>
+                                        <div className="text-emerald-400">&gt; success: workspace_optimized_in_4.2s</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* NEW TECH SPECS SECTION */}
+                    <TechSpecs />
+
+                    {/* FOOTER */}
+                    <footer className="bg-[#08080a] border-t border-white/5 pt-12 sm:pt-16 pb-8">
+                        <div className="max-w-7xl mx-auto px-4 sm:px-6">
+                            <div className="flex flex-col md:flex-row justify-between items-center gap-8 mb-12">
+                                <div className="flex items-center gap-2 font-bold text-xl text-white">
+                                    <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center text-black">
+                                        <i className="ph-fill ph-brain"></i>
+                                    </div>
+                                    <span>NeuroSort</span>
+                                </div>
+                                <div className="flex gap-4 sm:gap-6 text-slate-400 text-sm">
+                                    <a href="https://github.com/omd01/NeuroSort#readme" target="_blank" rel="noopener noreferrer" className="hover:text-white">Documentation</a>
+                                    <a href="https://github.com/omd01/NeuroSort" target="_blank" rel="noopener noreferrer" className="hover:text-white">GitHub Repo</a>
+                                    <a href="https://github.com/omd01/NeuroSort/issues" target="_blank" rel="noopener noreferrer" className="hover:text-white">Support</a>
+                                </div>
+                            </div>
+                            <div className="text-center text-slate-600 text-xs">
+                                &copy; 2024 <a href="https://github.com/omd01" target="_blank" rel="noopener noreferrer" className="hover:text-slate-400">Om Dahale</a>. Open Source Software. <br />
+                                MIT Licensed. Built for Builders.
+                            </div>
+                        </div>
+                    </footer>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+
+</html>
