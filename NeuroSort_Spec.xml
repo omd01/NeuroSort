@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ProjectRequest>
+    <Metadata>
+        <Title>NeuroSort Desktop App</Title>
+        <Role>Senior Full-Stack Engineer</Role>
+        <Specialization>Electron.js, Local AI Integration, File System Operations</Specialization>
+        <Objective>
+            Create a production-ready Electron application that organizes chaotic file directories 
+            into a structured "Twin-Directory" system using a hybrid approach of Heuristic Analysis 
+            and Local LLM Inference.
+        </Objective>
+    </Metadata>
+
+    <InputMaterial>
+        <Description>HTML Frontend code (UI) provided by user.</Description>
+        <FileReference>demo_frontend.html</FileReference>
+        <Task>Electron with React Frontend( get idea from demo_frontend.html) ,Build Electron backend, file system logic, and AI integration layer.</Task>
+    </InputMaterial>
+
+    <TechStack>
+        <Core>Electron (latest), Node.js</Core>
+        <Frontend>React (Vite), Tailwind CSS</Frontend>
+        <AILayer>
+            <Method>Localhost API Fetch</Method>
+            <Service>Ollama (Port 11434)</Service>
+            <Models>phi3, llama3</Models>
+            <Constraint>DO NOT bundle model; assume user installation.</Constraint>
+        </AILayer>
+        <Storage>electron-store (User settings/persistence)</Storage>
+        <Security>
+            <ContextIsolation>true</ContextIsolation>
+            <NodeIntegration>false</NodeIntegration>
+            <Bridge>preload.js</Bridge>
+        </Security>
+    </TechStack>
+
+    <CoreArchitecture name="Hybrid Sort Engine">
+        <Goal>Minimize CPU usage; minimize LLM calls.</Goal>
+        <Workflow>
+            <Step name="Scan">Read fs.readdir</Step>
+            
+            <Level1 type="Heuristic Extension Filter">
+                <Rule group="Visuals">
+                    <Extensions>.jpg, .png, .svg</Extensions>
+                    <Action>Move to /01_Assets</Action>
+                </Rule>
+                <Rule group="Code">
+                    <Extensions>.js, .py, .tsx</Extensions>
+                    <Action>Move to /00_Dev</Action>
+                </Rule>
+                <Rule group="Media">
+                    <Extensions>.mp4, .mov</Extensions>
+                    <Action>Move to /01_Assets</Action>
+                </Rule>
+            </Level1>
+
+            <Level2 type="Ambiguity Filter (AI Trigger)">
+                <TriggerExtensions>.pdf, .docx, .txt, .json, .md</TriggerExtensions>
+                <Process>
+                    <Input>Read first 500 characters of text content.</Input>
+                    <Prompt>
+                        Filename: '{filename}'. Read the first 500 characters. 
+                        Classify strictly as: 'INVOICE', 'CONTRACT', 'TECHNICAL_DOC', or 'MARKETING'. 
+                        JSON format only.
+                    </Prompt>
+                    <Action>Move file based on returned tag.</Action>
+                </Process>
+            </Level2>
+        </Workflow>
+    </CoreArchitecture>
+
+    <ImplementationPlan>
+        <Step number="1" title="Project Scaffold">
+            <Action>Generate setup.sh or batch file.</Action>
+            <Requirements>
+                <Structure>/src/main, /src/renderer, /src/shared</Structure>
+                <Dependencies>electron, electron-builder, vite, react, tailwindcss</Dependencies>
+                <Entry>main.js</Entry>
+            </Requirements>
+        </Step>
+
+        <Step number="2" title="Electron Main Process">
+            <File>main.js</File>
+            <Responsibilities>
+                <Handle>ipcMain events</Handle>
+                <Event name="select-folder">Open system dialog</Event>
+                <Event name="start-sort">Accept path, run Hybrid Sort Engine</Event>
+                <Safety>Ensure destination folders (00_Dev, 01_Assets) exist before move</Safety>
+            </Responsibilities>
+        </Step>
+
+        <Step number="3" title="Preload Bridge">
+            <File>preload.js</File>
+            <ExposedAPI>
+                <Method>window.api.selectFolder()</Method>
+                <Method>window.api.onLog((msg) => ...)</Method>
+                <Method>window.api.startProcessing(path)</Method>
+            </ExposedAPI>
+        </Step>
+
+        <Step number="4" title="Frontend Integration">
+            <File>App.jsx</File>
+            <Instruction>
+                Modify handleSelect and processFile to replace Mock Data with window.api calls.
+            </Instruction>
+            <Note>This step uses the code referenced in the InputMaterial section.</Note>
+        </Step>
+    </ImplementationPlan>
+
+    <EngineInstructions name="Antigravity Engine">
+        <ErrorHandling>
+            Catch lock/permission errors, log to UI, continue to next file. NO CRASHES.
+        </ErrorHandling>
+        <Concurrency>Limit to 5 concurrent operations.</Concurrency>
+        <UIFeedback>
+            Send ipcRenderer.send('log-update') for real-time progress.
+        </UIFeedback>
+    </EngineInstructions>
+
+    <Testing>
+        <File>TEST_GUIDE.md</File>
+        <Requirements>
+            <Item>How to mock Ollama API for UI testing.</Item>
+            <Item>How to package app (.exe / .dmg).</Item>
+        </Requirements>
+    </Testing>
+</ProjectRequest>
