@@ -4,6 +4,13 @@ const fs = require('fs');
 const https = require('https');
 const os = require('os');
 const { exec, spawn } = require('child_process');
+const crypto = require('crypto');
+
+// v2.0 Architecture Modules
+const { MASTER_TAXONOMY, sanitizeFolderName, getValidFolders } = require('./taxonomy');
+const RegexGuard = require('./RegexGuard');
+const MetadataAnalyst = require('./MetadataAnalyst');
+const modelManager = require('./ModelManager');
 
 // Fix for electron-store in CommonJS
 let store;
@@ -248,80 +255,141 @@ function startOllama() {
     spawn('ollama', ['serve'], { detached: true, stdio: 'ignore' }).unref();
 }
 
-// --- Hybrid Sort Engine ---
-
-const EXTENSIONS = {
-    assets: ['.jpg', '.jpeg', '.png', '.svg', '.gif', '.mp4', '.mov', '.avi', '.mp3', '.wav'],
-    code: ['.js', '.jsx', '.ts', '.tsx', '.py', '.html', '.css', '.json', '.java', '.cpp', '.c', '.h', '.sql'],
-    docs: ['.pdf', '.docx', '.doc', '.txt', '.md', '.pptx', '.xlsx', '.csv']
-};
+// --- v2.0 Hybrid Sort Engine (3-Stage Funnel) ---
 
 async function processDirectory(folderPath, event) {
-    console.log('[DEBUG] processDirectory called for:', folderPath);
+    console.log('[v2.0] processDirectory called for:', folderPath);
     const files = await fs.promises.readdir(folderPath);
-    console.log('[DEBUG] Files found:', files.length);
+    console.log('[v2.0] Files found:', files.length);
     const results = [];
+    const processingStartTime = Date.now();
+    const stats = {
+        stage1Hits: 0,
+        stage2Hits: 0,
+        stage3Hits: 0,
+        totalProcessed: 0,
+        duplicatesDeleted: 0
+    };
 
     // Filter valid files first to get accurate count
     const validFiles = [];
     for (const file of files) {
         const filePath = path.join(folderPath, file);
         try {
-            const stats = await fs.promises.stat(filePath);
-            if (stats.isFile() && !file.startsWith('.') && file !== 'desktop.ini') {
+            const fileStats = await fs.promises.stat(filePath);
+            if (fileStats.isFile() && !file.startsWith('.') && file !== 'desktop.ini') {
                 validFiles.push(file);
             }
         } catch (e) { }
     }
 
     const totalFiles = validFiles.length;
-    console.log('[DEBUG] Valid files to process:', totalFiles);
+    console.log('[v2.0] Valid files to process:', totalFiles);
     event.reply('processing-start', { total: totalFiles });
-    console.log('[DEBUG] Sent processing-start event');
+    console.log('[v2.0] Sent processing-start event');
 
-    // Concurrency Control
-    const CONCURRENCY_LIMIT = 3; // Reduced for heavier AI tasks
+    // Concurrency Control - Increased to 5 (Stage 1/2 are fast)
+    const CONCURRENCY_LIMIT = 5;
     const queue = [...validFiles];
     const activePromises = [];
 
     const processNext = async () => {
         if (queue.length === 0) return;
         const filename = queue.shift();
-        console.log('[DEBUG] Processing next file:', filename);
+        console.log('[v2.0] Processing:', filename);
         const filePath = path.join(folderPath, filename);
 
         try {
-            const stats = await fs.promises.stat(filePath);
-            if (stats.isDirectory()) return; // Skip directories
+            const fileStats = await fs.promises.stat(filePath);
+            if (fileStats.isDirectory()) return; // Skip directories
 
             const ext = path.extname(filename).toLowerCase();
 
             // Skip hidden files or system files
             if (filename.startsWith('.') || filename === 'desktop.ini') return;
 
+            // Emit processing start event
+            event.reply('file-processing-status', {
+                filename,
+                status: 'analyzing',
+                stage: null
+            });
             event.reply('log-update', { msg: `Analyzing: ${filename}`, type: 'process' });
 
-            // AI Analysis
-            const analysis = await classifyWithOllama(filePath, filename);
+            // === 3-STAGE FUNNEL SYSTEM ===
+            let classification = null;
 
-            // Determine Destination
-            let folderName = 'Unsorted';
-            let reason = 'Default';
-
-            if (analysis) {
-                folderName = analysis.folder || 'Unsorted';
-                reason = analysis.description || 'AI Classification';
-            } else {
-                // Fallback Heuristics
-                if (EXTENSIONS.assets.includes(ext)) folderName = 'Assets_Misc';
-                else if (EXTENSIONS.code.includes(ext)) folderName = 'Code_Misc';
-                else if (EXTENSIONS.docs.includes(ext)) folderName = 'Docs_Misc';
-                reason = 'Fallback Heuristic';
+            // STAGE 1: Regex Guard (0ms, 0MB RAM)
+            classification = RegexGuard.classify(filename);
+            if (classification) {
+                stats.stage1Hits++;
+                console.log(`[Stage 1 ✓] ${filename} -> ${classification.folder}`);
+                // Emit stage-specific event
+                event.reply('file-processing-status', {
+                    filename,
+                    status: 'classified',
+                    stage: 'Stage 1: Regex Guard',
+                    classification: {
+                        folder: classification.folder,
+                        reason: classification.reason,
+                        confidence: classification.confidence
+                    }
+                });
             }
 
-            // Sanitize Folder Name
-            folderName = folderName.replace(/[^a-zA-Z0-9_\- ]/g, '').trim();
-            if (folderName.length === 0) folderName = 'Unsorted';
+            // STAGE 2: Metadata Analyst (5ms, 10MB RAM)
+            if (!classification) {
+                classification = await MetadataAnalyst.analyze(filePath);
+                if (classification) {
+                    stats.stage2Hits++;
+                    console.log(`[Stage 2 ✓] ${filename} -> ${classification.folder}`);
+                    // Emit stage-specific event
+                    event.reply('file-processing-status', {
+                        filename,
+                        status: 'classified',
+                        stage: 'Stage 2: Metadata Analyst',
+                        classification: {
+                            folder: classification.folder,
+                            reason: classification.reason,
+                            confidence: classification.confidence
+                        }
+                    });
+                }
+            }
+
+            // STAGE 3: AI Arbiter (200ms+, 2GB RAM)
+            if (!classification) {
+                await modelManager.wake(); // Load model into RAM
+                classification = await classifyWithAI(filename, filePath);
+                if (classification) {
+                    stats.stage3Hits++;
+                    console.log(`[Stage 3 ✓] ${filename} -> ${classification.folder}`);
+                    // Emit stage-specific event
+                    event.reply('file-processing-status', {
+                        filename,
+                        status: 'classified',
+                        stage: 'Stage 3: AI Arbiter',
+                        classification: {
+                            folder: classification.folder,
+                            reason: classification.reason,
+                            confidence: classification.confidence
+                        }
+                    });
+                }
+            }
+
+            // Fallback to Unsorted if all stages fail
+            if (!classification) {
+                classification = {
+                    folder: '99_Unsorted',
+                    reason: 'Unable to classify',
+                    stage: 'Fallback',
+                    confidence: 'none'
+                };
+            }
+
+            const folderName = sanitizeFolderName(classification.folder);
+            const reason = classification.reason || classification.stage;
 
             const destFolder = path.join(folderPath, folderName);
 
@@ -330,28 +398,56 @@ async function processDirectory(folderPath, event) {
                 await fs.promises.mkdir(destFolder, { recursive: true });
             }
 
-            // Move File
+            // Move File with MD5-based Collision Detection
             const destPath = path.join(destFolder, filename);
             if (filePath !== destPath) {
-                // Handle collisions
                 let finalDestPath = destPath;
+
+                // Handle collisions with MD5 hash check
                 if (fs.existsSync(finalDestPath)) {
-                    const namePart = path.basename(filename, ext);
-                    finalDestPath = path.join(destFolder, `${namePart}_${Date.now()}${ext}`);
+                    const sourceHash = calculateMD5(filePath);
+                    const destHash = calculateMD5(finalDestPath);
+
+                    if (sourceHash === destHash) {
+                        // Duplicate file - delete source
+                        await fs.promises.unlink(filePath);
+                        stats.duplicatesDeleted++;
+                        event.reply('file-duplicate-detected', { filename, originalPath: finalDestPath });
+                        event.reply('log-update', { msg: `Duplicate deleted: ${filename}`, type: 'warning' });
+                        stats.totalProcessed++;
+                        return; // Skip move
+                    } else {
+                        // Different file - rename with timestamp
+                        const namePart = path.basename(filename, ext);
+                        finalDestPath = path.join(destFolder, `${namePart}_${Date.now()}${ext}`);
+                    }
                 }
 
                 await fs.promises.rename(filePath, finalDestPath);
 
                 const fileData = {
                     name: filename,
-                    type: EXTENSIONS.assets.includes(ext) ? 'image' : 'doc',
-                    size: (stats.size / 1024).toFixed(1) + 'KB',
+                    type: ['.jpg', '.jpeg', '.png', '.svg', '.gif'].includes(ext) ? 'image' : 'doc',
+                    size: (fileStats.size / 1024).toFixed(1) + 'KB',
                     dest: folderName,
-                    reason: reason
+                    reason: reason,
+                    stage: classification.stage // Add stage info for frontend detection
                 };
                 results.push(fileData);
+                stats.totalProcessed++;
                 event.reply('log-update', { msg: `Moved ${filename} -> ${folderName}`, type: 'success' });
                 event.reply('file-processed', fileData);
+
+                // Stream funnel statistics every 5 files
+                if (stats.totalProcessed % 5 === 0 || stats.totalProcessed === totalFiles) {
+                    event.reply('funnel-stats', {
+                        stage1: stats.stage1Hits,
+                        stage2: stats.stage2Hits,
+                        stage3: stats.stage3Hits,
+                        total: stats.totalProcessed,
+                        duplicates: stats.duplicatesDeleted
+                    });
+                }
             }
 
         } catch (err) {
@@ -376,10 +472,21 @@ async function processDirectory(folderPath, event) {
         }
     }
 
-    // 4. Post-Processing: Generate .neurosort metadata
+    // Log funnel statistics
+    console.log('[v2.0 Statistics]');
+    console.log(`  Stage 1 (Regex): ${stats.stage1Hits} files (${((stats.stage1Hits / stats.totalProcessed) * 100).toFixed(1)}%)`);
+    console.log(`  Stage 2 (Metadata): ${stats.stage2Hits} files (${((stats.stage2Hits / stats.totalProcessed) * 100).toFixed(1)}%)`);
+    console.log(`  Stage 3 (AI): ${stats.stage3Hits} files (${((stats.stage3Hits / stats.totalProcessed) * 100).toFixed(1)}%)`);
+    console.log(`  Total Processed: ${stats.totalProcessed}`);
+
+    event.reply('log-update', {
+        msg: `Funnel Stats - Regex:${stats.stage1Hits} Metadata:${stats.stage2Hits} AI:${stats.stage3Hits}`,
+        type: 'info'
+    });
+
+    // Post-Processing: Generate .neurosort metadata
     event.reply('log-update', { msg: "Generating folder context metadata...", type: "info" });
 
-    // Get unique set of destination folders
     const uniqueFolders = [...new Set(results.map(r => r.dest))].filter(d => d);
 
     for (const folderName of uniqueFolders) {
@@ -395,7 +502,22 @@ async function processDirectory(folderPath, event) {
         }
     }
 
-    event.reply('processing-complete');
+    // Calculate processing duration
+    const processingDuration = Date.now() - processingStartTime;
+
+    // Send final completion with real statistics
+    event.reply('processing-complete', {
+        totalMoved: stats.totalProcessed - stats.duplicatesDeleted,
+        totalProcessed: stats.totalProcessed,
+        duplicatesDeleted: stats.duplicatesDeleted,
+        totalFolders: uniqueFolders.length,
+        processingTime: processingDuration,
+        funnelBreakdown: {
+            stage1: stats.stage1Hits,
+            stage2: stats.stage2Hits,
+            stage3: stats.stage3Hits
+        }
+    });
 }
 
 // --- Helper: Generate .neurosort Metadata ---
@@ -458,75 +580,107 @@ async function generateFolderMetadata(folderPath, folderName) {
     }
 }
 
-async function classifyWithOllama(filePath, filename) {
+/**
+ * v2.0 AI Arbiter (Stage 3)
+ * Text-only classification with constrained taxonomy
+ * Only called for the "Ambiguous 10%" after Stage 1 and 2 fail
+ */
+async function classifyWithAI(filename, filePath) {
     try {
         const ext = path.extname(filename).toLowerCase();
-        const isImage = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'].includes(ext);
 
-        let model = 'phi3';
-        let prompt = '';
-        let images = [];
+        // Read first 500 chars for context (text files only)
+        let contentSnippet = '';
+        const textExtensions = ['.txt', '.md', '.json', '.csv', '.log', '.xml', '.yml', '.yaml'];
 
-        if (isImage) {
-            model = 'llava'; // Vision model
-            const imageBitmap = await fs.promises.readFile(filePath);
-            images = [imageBitmap.toString('base64')];
-            prompt = `
-            Analyze this image and suggest a hierarchical folder path.
-            Rules:
-            1. Use "Parent/Child" format (e.g., "Marketing/Social", "Design/Logos", "Personal/Photos").
-            2. Be specific.
-            3. JSON Format: {"folder": "Parent/Child", "description": "Brief description"}
-            `;
-        } else {
-            // Text/Code Analysis
-            const buffer = Buffer.alloc(1000); // Read more context
-            const fd = await fs.promises.open(filePath, 'r');
-            await fd.read(buffer, 0, 1000, 0);
-            await fd.close();
-            const content = buffer.toString('utf-8').replace(/\0/g, '');
-
-            prompt = `
-            Analyze this file and suggest a hierarchical folder path.
-            Filename: '${filename}'
-            Content Snippet: "${content}"
-            
-            Rules:
-            1. Use "Parent/Child" format (e.g., "Marketing/Scripts", "Development/React", "Finance/Invoices").
-            2. Group related items logically.
-            3. JSON Format: {"folder": "Parent/Child", "description": "Brief rationale"}
-            `;
+        if (textExtensions.includes(ext)) {
+            try {
+                const buffer = Buffer.alloc(500);
+                const fd = await fs.promises.open(filePath, 'r');
+                await fd.read(buffer, 0, 500, 0);
+                await fd.close();
+                contentSnippet = buffer.toString('utf-8').replace(/\0/g, '').trim();
+            } catch (e) {
+                // Can't read content, classify by filename only
+            }
         }
+
+        // Constrained Classification Prompt
+        const validFolders = getValidFolders();
+        const prompt = `SYSTEM: You are a JSON categorization engine.
+USER: Classify the file "${filename}"${contentSnippet ? `\nContent preview: "${contentSnippet.substring(0, 200)}..."` : ''}.
+OPTIONS: ${JSON.stringify(validFolders)}
+RESPONSE RULES:
+1. Return ONLY the exact string from OPTIONS.
+2. Do not explain.
+3. If uncertain, return "99_Unsorted".
+4. Response must be valid JSON: {"folder": "OPTION_VALUE"}`;
 
         const response = await fetch('http://localhost:11434/api/generate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                model: model,
+                model: 'phi3',
                 prompt: prompt,
-                images: images.length > 0 ? images : undefined,
                 stream: false,
-                format: 'json'
+                format: 'json',
+                options: {
+                    temperature: 0.1, // Low temperature for deterministic output
+                    num_predict: 50 // Short response
+                }
             })
         });
 
-        if (!response.ok) throw new Error(`Ollama API error: ${response.statusText}`);
+        if (!response.ok) {
+            throw new Error(`Ollama API error: ${response.statusText}`);
+        }
 
         const data = await response.json();
         let result;
+
         try {
             result = JSON.parse(data.response);
         } catch (e) {
+            // Try to extract JSON from response
             const match = data.response.match(/\{.*\}/s);
-            if (match) result = JSON.parse(match[0]);
+            if (match) {
+                result = JSON.parse(match[0]);
+            } else {
+                throw new Error('Invalid JSON response from AI');
+            }
         }
 
-        return result;
+        // Validate that folder exists in taxonomy
+        if (result.folder && getValidFolders().includes(result.folder)) {
+            return {
+                folder: result.folder,
+                reason: 'AI Classification (Constrained)',
+                stage: 'Stage 3: AI Arbiter',
+                confidence: 'medium'
+            };
+        } else {
+            // AI returned invalid folder, fallback to Unsorted
+            return {
+                folder: '99_Unsorted',
+                reason: 'AI returned invalid category',
+                stage: 'Stage 3: AI Arbiter (Fallback)',
+                confidence: 'low'
+            };
+        }
 
     } catch (error) {
-        console.error('Ollama classification error:', error);
-        return null;
+        console.error('[AI Arbiter] Classification error:', error.message);
+        return null; // Will trigger unsorted fallback
     }
+}
+
+/**
+ * Helper: Calculate MD5 hash of a file
+ * Used for duplicate detection
+ */
+function calculateMD5(filePath) {
+    const fileBuffer = fs.readFileSync(filePath);
+    return crypto.createHash('md5').update(fileBuffer).digest('hex');
 }
 
 app.whenReady().then(() => {
