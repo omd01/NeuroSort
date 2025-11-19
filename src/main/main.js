@@ -19,6 +19,14 @@ let store;
     store = new Store();
 })();
 
+// Force Electron to use dedicated GPU (GPU 1) instead of integrated Intel GPU (GPU 0)
+app.commandLine.appendSwitch('force-high-performance');
+app.commandLine.appendSwitch('disable-gpu-driver-bug-workarounds');
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('enable-zero-copy');
+// Prefer discrete GPU for better performance with AI workloads
+app.commandLine.appendSwitch('use-angle', 'default');
+
 function createWindow() {
     const win = new BrowserWindow({
         width: 1200,
