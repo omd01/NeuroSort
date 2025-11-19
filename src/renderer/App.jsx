@@ -22,6 +22,8 @@ export default function App() {
         setLogs(prev => [{ id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, msg, type }, ...prev].slice(0, 50));
     };
 
+    const [isLoading, setIsLoading] = useState(true);
+
     useEffect(() => {
         // Listen for logs from main process
         if (window.api) {
@@ -31,7 +33,25 @@ export default function App() {
             window.api.onProcessingComplete(() => {
                 setStep(STEPS.COMPLETE);
             });
+
+            // Auto-check for setup
+            const checkSetup = async () => {
+                try {
+                    const check = await window.api.checkPrerequisites();
+                    if (check.status === 'ready') {
+                        setStep(STEPS.MODEL_LOAD);
+                    }
+                } catch (e) {
+                    console.error("Auto-check failed:", e);
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+            checkSetup();
+        } else {
+            setIsLoading(false);
         }
+
         return () => {
             if (window.api) {
                 window.api.removeLogListener();
@@ -39,6 +59,17 @@ export default function App() {
             }
         };
     }, []);
+
+    if (isLoading) {
+        return (
+            <div className="h-screen w-screen flex items-center justify-center bg-[#09090b] text-slate-500 font-mono text-xs">
+                <div className="flex flex-col items-center gap-3">
+                    <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                    <span>System Check...</span>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="h-screen w-screen flex flex-col bg-[#09090b] text-slate-200 overflow-hidden selection:bg-indigo-500/30">
