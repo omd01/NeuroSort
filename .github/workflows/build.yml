@@ -14,6 +14,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     
     strategy:
+      fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
     
@@ -34,6 +35,7 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           release: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          skip_build: false
           mac_certs: ${{ secrets.MAC_CERTS }}
           mac_certs_password: ${{ secrets.MAC_CERTS_PASSWORD }}
         env:
