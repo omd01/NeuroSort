@@ -17,9 +17,10 @@ export default function App() {
     const [processedCount, setProcessedCount] = useState(0);
     const [currentAction, setCurrentAction] = useState("");
     const [selectedPath, setSelectedPath] = useState(null);
+    const [systemStats, setSystemStats] = useState({ memory: "--- / ---", port: "---" });
 
     const addLog = (msg, type = "info") => {
-        setLogs(prev => [{ id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, msg, type }, ...prev].slice(0, 50));
+        setLogs(prev => [{ id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, timestamp: Date.now(), msg, type }, ...prev].slice(0, 50));
     };
 
     const [isLoading, setIsLoading] = useState(true);
@@ -32,6 +33,9 @@ export default function App() {
             });
             window.api.onProcessingComplete(() => {
                 setStep(STEPS.COMPLETE);
+            });
+            window.api.onSystemStats((stats) => {
+                setSystemStats(stats);
             });
 
             // Auto-check for setup
@@ -56,6 +60,7 @@ export default function App() {
             if (window.api) {
                 window.api.removeLogListener();
                 window.api.removeCompleteListener();
+                window.api.removeSystemStatsListener();
             }
         };
     }, []);
@@ -88,7 +93,7 @@ export default function App() {
             </div>
 
             {/* Main Content Area */}
-            <div className="flex-1 relative">
+            <div className="flex-1 flex flex-col relative overflow-hidden pb-8">
                 {step === STEPS.SETUP && <SetupView onNext={() => setStep(STEPS.MODEL_LOAD)} />}
                 {step === STEPS.MODEL_LOAD && <ModelLoader onComplete={() => setStep(STEPS.SELECT_DRIVE)} addLog={addLog} />}
                 {step === STEPS.SELECT_DRIVE && <DriveSelection onStart={() => setStep(STEPS.PROCESSING)} addLog={addLog} selectedPath={selectedPath} setSelectedPath={setSelectedPath} />}
@@ -97,17 +102,23 @@ export default function App() {
             </div>
 
             {/* Status Bar */}
-            <div className="h-8 bg-[#0f0f12] border-t border-white/5 flex items-center px-4 text-[10px] text-slate-500 justify-between">
+            <div className="fixed bottom-0 left-0 w-full h-8 bg-[#0f0f12] border-t border-white/5 flex items-center px-4 text-[10px] text-slate-500 justify-between z-50">
                 <div className="flex items-center gap-3">
                     <div className="flex items-center gap-1.5">
-                        <div className={`w-1.5 h-1.5 rounded-full ${step >= STEPS.PROCESSING && step !== STEPS.COMPLETE ? 'bg-green-500 animate-pulse' : 'bg-slate-600'}`}></div>
-                        {step === STEPS.PROCESSING ? "AI ENGINE ACTIVE" : "AI ENGINE STANDBY"}
+                        <div className={`w-1.5 h-1.5 rounded-full 
+                            ${step === STEPS.PROCESSING || step === STEPS.MODEL_LOAD ? 'bg-green-500 animate-pulse' :
+                                logs.some(l => l.type === 'error') ? 'bg-red-500' :
+                                    'bg-yellow-500'}`}></div>
+                        {step === STEPS.PROCESSING ? "AI ENGINE ACTIVE" :
+                            step === STEPS.MODEL_LOAD ? "AI ENGINE LOADING" :
+                                logs.some(l => l.type === 'error') ? "AI ENGINE ERROR" :
+                                    "AI ENGINE STANDBY"}
                     </div>
                     <span className="w-px h-3 bg-white/10"></span>
-                    <span>MEM: 420MB / 16GB</span>
+                    <span>MEM: {systemStats.memory}</span>
                 </div>
                 <div>
-                    LOCAL SERVER: PORT 11434
+                    LOCAL SERVER: PORT {systemStats.port}
                 </div>
             </div>
 
@@ -115,7 +126,7 @@ export default function App() {
             <div className="fixed bottom-10 right-4 w-80 max-h-48 overflow-y-auto bg-black/80 backdrop-blur-md border border-white/10 rounded-lg p-3 font-mono text-[10px] text-slate-400 pointer-events-none select-none z-50 flex flex-col-reverse gap-1 shadow-xl">
                 {logs.map(log => (
                     <div key={log.id} className={`${log.type === 'error' ? 'text-red-400' : log.type === 'success' ? 'text-emerald-400' : log.type === 'warning' ? 'text-yellow-400' : 'text-slate-400'}`}>
-                        <span className="opacity-50">[{new Date(log.id).toLocaleTimeString().split(' ')[0]}]</span> {log.msg}
+                        <span className="opacity-50">[{new Date(log.timestamp).toLocaleTimeString().split(' ')[0]}]</span> {log.msg}
                     </div>
                 ))}
                 {logs.length === 0 && <div className="opacity-30 italic">System ready...</div>}
@@ -412,23 +423,53 @@ function DriveSelection({ onStart, addLog, selectedPath, setSelectedPath }) {
 // --- View: 4. Processing Dashboard (Real Data) ---
 function ProcessingDashboard({ onComplete, addLog, selectedPath }) {
     const [files, setFiles] = useState([]);
-    const [stats, setStats] = useState({ processed: 0 });
+    const [stats, setStats] = useState({ processed: 0, total: 0, startTime: null, etr: "Calculating..." });
     const [currentFile, setCurrentFile] = useState(null);
 
+    const processingStarted = React.useRef(false);
+
     useEffect(() => {
-        if (window.api) {
+        if (window.api && !processingStarted.current) {
+            processingStarted.current = true;
+
+            // Listen for start event to get total count
+            window.api.onProcessingStart((data) => {
+                console.log('[App.jsx] Received processing-start:', data);
+                setStats(prev => ({ ...prev, total: data.total, startTime: Date.now() }));
+                addLog(`Found ${data.total} files to process.`, "info");
+            });
+
             // Start Processing
             window.api.startProcessing(selectedPath);
 
             // Listen for real file events
             window.api.onFileProcessed((file) => {
-                setFiles(prev => [file, ...prev]);
-                setStats(prev => ({ ...prev, processed: prev.processed + 1 }));
-                setCurrentFile(null); // Clear "processing" state for now, or use a start event if we had one
-            });
+                console.log('[App.jsx] Received file:', file);
+                addLog(`[UI] Received: ${file.name}`, "info");
+                setFiles(prev => {
+                    console.log('[App.jsx] Updating files state. Previous count:', prev.length);
+                    return [file, ...prev];
+                });
+                setStats(prev => {
+                    const newProcessed = prev.processed + 1;
 
-            // We could also listen for "processing-start" for a specific file if we added that to main.js
-            // For now, we rely on log updates for general activity
+                    // Calculate ETR
+                    let newEtr = prev.etr;
+                    if (prev.startTime && newProcessed > 0) {
+                        const elapsed = Date.now() - prev.startTime;
+                        const avgTimePerFile = elapsed / newProcessed;
+                        const remaining = prev.total - newProcessed;
+                        const etrMs = remaining * avgTimePerFile;
+
+                        if (remaining <= 0) newEtr = "Finishing...";
+                        else if (etrMs < 60000) newEtr = `${Math.ceil(etrMs / 1000)}s remaining`;
+                        else newEtr = `${Math.ceil(etrMs / 60000)}m remaining`;
+                    }
+
+                    return { ...prev, processed: newProcessed, etr: newEtr };
+                });
+                setCurrentFile(null);
+            });
         }
 
         return () => {
@@ -444,11 +485,11 @@ function ProcessingDashboard({ onComplete, addLog, selectedPath }) {
             <div className="flex gap-4 mb-6">
                 <div className="glass-panel flex-1 p-4 rounded-xl border-l-4 border-indigo-500">
                     <div className="text-[10px] text-slate-400 uppercase tracking-wider">Files Processed</div>
-                    <div className="text-2xl font-bold text-white mt-1">{stats.processed} <span className="text-slate-500 text-sm">/ {stats.total}</span></div>
+                    <div className="text-2xl font-bold text-white mt-1">{stats.processed} <span className="text-slate-500 text-sm">/ {stats.total || '?'}</span></div>
                 </div>
                 <div className="glass-panel flex-1 p-4 rounded-xl border-l-4 border-purple-500">
-                    <div className="text-[10px] text-slate-400 uppercase tracking-wider">Efficiency Gain</div>
-                    <div className="text-2xl font-bold text-white mt-1">~14m <span className="text-slate-500 text-sm">saved</span></div>
+                    <div className="text-[10px] text-slate-400 uppercase tracking-wider">Estimated Time</div>
+                    <div className="text-2xl font-bold text-white mt-1">{stats.etr}</div>
                 </div>
             </div>
 

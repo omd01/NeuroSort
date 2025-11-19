@@ -39,6 +39,20 @@ function createWindow() {
         win.loadFile(path.join(__dirname, '../../dist/index.html'));
     }
 
+    // Send system stats every 2 seconds
+    setInterval(() => {
+        if (!win.isDestroyed()) {
+            const totalMem = (os.totalmem() / (1024 * 1024 * 1024)).toFixed(0);
+            const freeMem = (os.freemem() / (1024 * 1024 * 1024)).toFixed(1);
+            const usedMem = (totalMem - freeMem).toFixed(1);
+
+            win.webContents.send('system-stats', {
+                memory: `${usedMem}GB / ${totalMem}GB`,
+                port: '11434' // Default Ollama port
+            });
+        }
+    }, 2000);
+
     // IPC Handlers
     ipcMain.handle('select-folder', async () => {
         const result = await dialog.showOpenDialog(win, {
@@ -243,17 +257,37 @@ const EXTENSIONS = {
 };
 
 async function processDirectory(folderPath, event) {
+    console.log('[DEBUG] processDirectory called for:', folderPath);
     const files = await fs.promises.readdir(folderPath);
+    console.log('[DEBUG] Files found:', files.length);
     const results = [];
+
+    // Filter valid files first to get accurate count
+    const validFiles = [];
+    for (const file of files) {
+        const filePath = path.join(folderPath, file);
+        try {
+            const stats = await fs.promises.stat(filePath);
+            if (stats.isFile() && !file.startsWith('.') && file !== 'desktop.ini') {
+                validFiles.push(file);
+            }
+        } catch (e) { }
+    }
+
+    const totalFiles = validFiles.length;
+    console.log('[DEBUG] Valid files to process:', totalFiles);
+    event.reply('processing-start', { total: totalFiles });
+    console.log('[DEBUG] Sent processing-start event');
 
     // Concurrency Control
     const CONCURRENCY_LIMIT = 3; // Reduced for heavier AI tasks
-    const queue = [...files];
+    const queue = [...validFiles];
     const activePromises = [];
 
     const processNext = async () => {
         if (queue.length === 0) return;
         const filename = queue.shift();
+        console.log('[DEBUG] Processing next file:', filename);
         const filePath = path.join(folderPath, filename);
 
         try {
@@ -349,10 +383,10 @@ async function processDirectory(folderPath, event) {
     const uniqueFolders = [...new Set(results.map(r => r.dest))].filter(d => d);
 
     for (const folderName of uniqueFolders) {
-        const folderPath = path.join(folderPath, folderName);
-        if (fs.existsSync(folderPath)) {
+        const subFolderPath = path.join(folderPath, folderName);
+        if (fs.existsSync(subFolderPath)) {
             try {
-                await generateFolderMetadata(folderPath, folderName);
+                await generateFolderMetadata(subFolderPath, folderName);
                 event.reply('log-update', { msg: `Context generated for: ${folderName}`, type: "success" });
             } catch (err) {
                 console.error(`Metadata generation failed for ${folderName}:`, err);
@@ -437,7 +471,13 @@ async function classifyWithOllama(filePath, filename) {
             model = 'llava'; // Vision model
             const imageBitmap = await fs.promises.readFile(filePath);
             images = [imageBitmap.toString('base64')];
-            prompt = `Analyze this image. Suggest a single, short, category-based folder name (e.g., 'Screenshots', 'Nature', 'Invoices', 'Diagrams'). Also provide a very brief description. Respond with JSON: {"folder": "CategoryName", "description": "Brief description"}`;
+            prompt = `
+            Analyze this image and suggest a hierarchical folder path.
+            Rules:
+            1. Use "Parent/Child" format (e.g., "Marketing/Social", "Design/Logos", "Personal/Photos").
+            2. Be specific.
+            3. JSON Format: {"folder": "Parent/Child", "description": "Brief description"}
+            `;
         } else {
             // Text/Code Analysis
             const buffer = Buffer.alloc(1000); // Read more context
@@ -446,7 +486,16 @@ async function classifyWithOllama(filePath, filename) {
             await fd.close();
             const content = buffer.toString('utf-8').replace(/\0/g, '');
 
-            prompt = `Filename: '${filename}'. Content: "${content}". Suggest a single, short, category-based folder name (e.g., 'Financial', 'Legal', 'React_Components', 'Notes'). Respond with JSON: {"folder": "CategoryName", "description": "Brief rationale"}`;
+            prompt = `
+            Analyze this file and suggest a hierarchical folder path.
+            Filename: '${filename}'
+            Content Snippet: "${content}"
+            
+            Rules:
+            1. Use "Parent/Child" format (e.g., "Marketing/Scripts", "Development/React", "Finance/Invoices").
+            2. Group related items logically.
+            3. JSON Format: {"folder": "Parent/Child", "description": "Brief rationale"}
+            `;
         }
 
         const response = await fetch('http://localhost:11434/api/generate', {

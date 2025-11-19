@@ -10,8 +10,11 @@ contextBridge.exposeInMainWorld('api', {
     checkPrerequisites: () => ipcRenderer.invoke('check-prerequisites'),
     installOllama: () => ipcRenderer.invoke('install-ollama'),
     pullModel: (model) => ipcRenderer.invoke('pull-model', model),
-    onFileProcessed: (callback) => ipcRenderer.on('file-processed', (event, data) => callback(data)),
+    onFileProcessed: (callback) => ipcRenderer.on('file-processed', (event, file) => callback(file)),
+    onProcessingStart: (callback) => ipcRenderer.on('processing-start', (event, data) => callback(data)),
     removeFileListener: () => ipcRenderer.removeAllListeners('file-processed'),
     onDownloadProgress: (callback) => ipcRenderer.on('download-progress', (event, data) => callback(data)),
-    removeDownloadProgressListener: () => ipcRenderer.removeAllListeners('download-progress')
+    removeDownloadProgressListener: () => ipcRenderer.removeAllListeners('download-progress'),
+    onSystemStats: (callback) => ipcRenderer.on('system-stats', (event, data) => callback(data)),
+    removeSystemStatsListener: () => ipcRenderer.removeAllListeners('system-stats')
 });
